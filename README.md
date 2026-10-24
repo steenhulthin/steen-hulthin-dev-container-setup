@@ -1,4 +1,4 @@
-# Dev workspaces
+# Steen Hulthin's Dev Workspaces
 
 A Podman image with an Ubuntu environment for working with coding agents, and a script that starts named, persistent workspaces from it. The agents run inside the container, so they can't touch the rest of your machine unless you mount something into the workspace.
 
