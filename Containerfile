@@ -21,6 +21,11 @@ RUN userdel -r ubuntu 2>/dev/null || true \
  && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \
  && chmod 0440 /etc/sudoers.d/dev
 
+# Git aliases for every user in the image.
+RUN git config --system alias.st status \
+ && git config --system alias.ci commit \
+ && git config --system alias.co checkout
+
 # Skills, copied in at build time. Each SKILL.md's folder is linked into the
 # harnesses' skill folders by init-workspace at every start.
 RUN mkdir -p /opt/skills \
