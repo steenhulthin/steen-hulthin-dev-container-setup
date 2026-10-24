@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Create, re-attach to, or remove a named workspace.
+#
+#   workspace <name>                    create the workspace, or re-attach to it
+#   workspace <name> --mount <dir>      as above, mounting <dir> at /home/dev/project
+#   workspace rm <name>                 remove the container, keep its volume
+#   workspace purge <name>              remove the container and its volume
+set -euo pipefail
+
+IMAGE="${WORKSPACE_IMAGE:-localhost/dev-workspace:latest}"
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://host.containers.internal:11434/v1}"
+
+usage() {
+  echo "usage: workspace <name> [--mount <dir>]" >&2
+  echo "       workspace rm <name>" >&2
+  echo "       workspace purge <name>" >&2
+  exit 2
+}
+
+check_name() {
+  [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "workspace: invalid name '$1'" >&2; exit 2; }
+}
+
+[[ $# -ge 1 ]] || usage
+
+case "$1" in
+  rm|purge)
+    [[ $# -eq 2 ]] || usage
+    check_name "$2"
+    podman rm -f "ws-$2" >/dev/null 2>&1 || true
+    if [ "$1" = purge ]; then
+      podman volume rm "ws-$2"
+    fi
+    exit 0
+    ;;
+esac
+
+name="$1"
+shift
+check_name "$name"
+container="ws-$name"
+
+mounts=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mount)
+      [ $# -ge 2 ] || usage
+      mounts+=(-v "$(realpath -e "$2"):/home/dev/project")
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+if ! podman container exists "$container"; then
+  podman run -d --name "$container" --hostname "$name" \
+    -v "$container:/home/dev" \
+    ${mounts[@]+"${mounts[@]}"} \
+    -e OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
+    "$IMAGE" >/dev/null
+elif [ ${#mounts[@]} -gt 0 ]; then
+  echo "workspace: '$name' already exists; mounts are set at creation. Run 'workspace rm $name' first." >&2
+  exit 1
+fi
+
+podman start "$container" >/dev/null
+exec podman exec -it -w /home/dev "$container" bash -l
