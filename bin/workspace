@@ -54,6 +54,7 @@ done
 
 if ! podman container exists "$container"; then
   podman run -d --name "$container" --hostname "$name" \
+    --userns=keep-id \
     -v "$container:/home/dev" \
     ${mounts[@]+"${mounts[@]}"} \
     -e OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
