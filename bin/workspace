@@ -65,4 +65,4 @@ elif [ ${#mounts[@]} -gt 0 ]; then
 fi
 
 podman start "$container" >/dev/null
-exec podman exec -it -w /home/dev "$container" bash -l
+exec podman exec -it -w /home/dev "$container" tmux new -A -s main

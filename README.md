@@ -4,7 +4,7 @@ A Podman image with an Ubuntu environment for working with coding agents, and a 
 
 ## What's in the image
 
-- Ubuntu 26.04, Python 3, Git, GitHub CLI, Node.js 24
+- Ubuntu 26.04, Python 3, Git, GitHub CLI, Node.js 24, tmux
 - Agent harnesses: Claude Code, Codex, Mistral Vibe, pi
 - Skills: the Matt Pocock skills and PStack, both linked into the harnesses at start
 - Non-root user `dev` with passwordless `sudo`
@@ -38,7 +38,7 @@ Put `bin/` on your `PATH`, or call `bin/workspace` directly.
 bin/workspace myproject
 ```
 
-This creates the container `ws-myproject` and the volume `ws-myproject`, then opens a shell in it. Running the same command later re-attaches to the same workspace.
+This creates the container `ws-myproject` and the volume `ws-myproject`, then opens a tmux session named `main` in it. Running the same command later attaches to the same workspace and the same tmux session.
 
 To mount a host folder into the workspace at `/home/dev/project`:
 
@@ -47,6 +47,16 @@ bin/workspace myproject --mount ~/src/myproject
 ```
 
 Mounts are set when the workspace is created. To change them, remove the workspace and create it again. Only mount what the agents need.
+
+## Shells and sessions
+
+Each `bin/workspace myproject` is a tmux client of the session `main`, created on first connect. Shells and running processes live in the tmux server inside the container, so they survive you detaching or closing the terminal.
+
+- **Detach:** `Ctrl-b d`. The session keeps running in the background.
+- **Re-attach:** run `bin/workspace myproject` again, from any terminal.
+- **Several terminals at once:** every invocation is another client of the same session, and all clients show the same screen. For more shells, use tmux's windows and panes: `Ctrl-b c` for a new window, `Ctrl-b %` to split.
+
+Sessions survive closing the terminal, but not stopping the container. `workspace rm`, `workspace purge`, and a host reboot kill every shell and process in the workspace. The volume keeps your files and logins; it doesn't keep running processes.
 
 ## Log in to the harnesses
 
@@ -60,11 +70,11 @@ Log in once per workspace. The credentials are saved in the workspace's volume.
 
 ## Persistence
 
-Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds.
+Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. tmux sessions don't: they stop with the container.
 
 ```bash
 bin/workspace rm myproject       # remove the container, keep the volume
-bin/workspace myproject          # re-attach later, with everything as it was
+bin/workspace myproject          # attach later, with files and logins as they were
 bin/workspace purge myproject    # remove the container and the volume
 ```
 

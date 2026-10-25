@@ -9,7 +9,7 @@ RUN apt-get update \
  && apt-get -y upgrade \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl git gh sudo jq less procps openssh-client nano vim-tiny \
-      python3 python3-pip python3-venv \
+      python3 python3-pip python3-venv tmux \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
