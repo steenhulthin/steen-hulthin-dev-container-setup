@@ -12,6 +12,7 @@ OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://host.containers.internal:11434/v1}"
 
 usage() {
   echo "usage: workspace <name> [--mount <dir>]" >&2
+  echo "       workspace ls" >&2
   echo "       workspace rm <name>" >&2
   echo "       workspace purge <name>" >&2
   exit 2
@@ -24,6 +25,11 @@ check_name() {
 [[ $# -ge 1 ]] || usage
 
 case "$1" in
+  ls)
+    [[ $# -eq 1 ]] || usage
+    podman ps -a --filter "name=^ws-" --format "table {{.Names}}\t{{.Status}}" | sed 's/^ws-//'
+    exit 0
+    ;;
   rm|purge)
     [[ $# -eq 2 ]] || usage
     check_name "$2"
