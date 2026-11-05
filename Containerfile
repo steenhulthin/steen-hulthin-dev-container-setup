@@ -26,19 +26,34 @@ RUN git config --system alias.st status \
  && git config --system alias.ci commit \
  && git config --system alias.co checkout
 
-# Skills, copied in at build time. Each SKILL.md's folder is linked into the
-# harnesses' skill folders by init-workspace at every start.
+# Skill sets, copied in at build time, one folder per set under /opt/skills.
+# The user picks which sets a workspace gets when creating it (SKILL_SETS);
+# init-workspace links the chosen sets' skill folders into the harnesses' skill
+# folders at every start.
 RUN mkdir -p /opt/skills \
  && git clone --depth 1 https://github.com/mattpocock/skills /opt/skills/mattpocock \
  && git clone --depth 1 https://github.com/cursor/plugins /opt/skills/cursor-plugins \
  && mv /opt/skills/cursor-plugins/pstack /opt/skills/pstack \
- && rm -rf /opt/skills/cursor-plugins /opt/skills/*/.git \
+ && rm -rf /opt/skills/cursor-plugins \
+ && git clone --depth 1 --branch v7.0.2 https://github.com/obra/superpowers /opt/skills/superpowers \
+ && git clone --depth 1 --branch 0.6.15 https://github.com/addyosmani/agent-skills /opt/skills/addyosmani \
+ && rm -rf /opt/skills/*/.git \
  && for s in tdd teach; do \
       mv /opt/skills/pstack/skills/$s /opt/skills/pstack/skills/pstack-$s \
       && sed -i "s/^name: $s\$/name: pstack-$s/" /opt/skills/pstack/skills/pstack-$s/SKILL.md; \
     done \
- && test -z "$(find /opt/skills -name SKILL.md -printf '%h\n' | xargs -n1 basename | sort | uniq -d)" \
+ && for set in /opt/skills/*; do \
+      test -z "$(find "$set" -name SKILL.md -printf '%h\n' | xargs -n1 basename | sort | uniq -d)" || exit 1; \
+    done \
  && chmod -R a+rX /opt/skills
+
+# tmux plugins, pinned to their latest tagged releases, copied in at build time and loaded by the system-wide tmux.conf.
+# Saved sessions go to the user's home, so they live in the workspace volume.
+RUN git clone --depth 1 --branch v4.0.0 https://github.com/tmux-plugins/tmux-resurrect /opt/tmux-plugins/tmux-resurrect \
+ && git clone --depth 1 --branch v3.1.0 https://github.com/tmux-plugins/tmux-continuum /opt/tmux-plugins/tmux-continuum \
+ && rm -rf /opt/tmux-plugins/*/.git \
+ && chmod -R a+rX /opt/tmux-plugins
+COPY image/tmux.conf /etc/tmux.conf
 
 COPY image/init-workspace.sh /usr/local/bin/init-workspace
 RUN chmod 0755 /usr/local/bin/init-workspace

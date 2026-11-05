@@ -3,6 +3,8 @@
 #
 #   workspace <name>                    create the workspace, or re-attach to it
 #   workspace <name> --mount <dir>      as above, mounting <dir> at /home/dev/project
+#                                       asks which skill sets to install; set WORKSPACE_SKILLS
+#                                       (e.g. mattpocock,openspec) to skip the question
 #   workspace rm <name>                 remove the container, keep its volume
 #   workspace purge <name>              remove the container and its volume
 set -euo pipefail
@@ -58,12 +60,45 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Ask once, at creation, for the git identity. Defaults to the host's.
+ask() {
+  local answer
+  read -r -p "$1${2:+ [$2]}: " answer || true
+  echo "${answer:-$2}"
+}
+
+# Ask which skill sets the workspace gets. Prints the chosen ids, comma-separated.
+choose_skill_sets() {
+  local ids=(mattpocock pstack superpowers addyosmani openspec)
+  local labels=("Matt Pocock's skills" "PStack" "Superpowers" "Addy Osmani's agent-skills" "OpenSpec (CLI)")
+  local i answer picked=() n
+  for i in "${!ids[@]}"; do echo "  $((i + 1))) ${labels[$i]}" >&2; done
+  read -r -p "Skill sets to install, e.g. 1,3 (empty for none): " answer || true
+  for n in $(echo "$answer" | tr ',' ' '); do
+    if [[ "$n" =~ ^[1-5]$ ]]; then picked+=("${ids[$((n - 1))]}"); else echo "workspace: ignoring '$n'" >&2; fi
+  done
+  (IFS=,; echo "${picked[*]-}")
+}
+
 if ! podman container exists "$container"; then
+  git_name="$(git config --global user.name 2>/dev/null || true)"
+  git_email="$(git config --global user.email 2>/dev/null || true)"
+  if [ -t 0 ]; then
+    git_name="$(ask "Git user.name" "$git_name")"
+    git_email="$(ask "Git user.email" "$git_email")"
+  fi
+  skill_sets="${WORKSPACE_SKILLS-}"
+  if [ -z "${WORKSPACE_SKILLS+x}" ] && [ -t 0 ]; then
+    skill_sets="$(choose_skill_sets)"
+  fi
   podman run -d --name "$container" --hostname "$name" \
     --userns=keep-id \
     -v "$container:/home/dev" \
     ${mounts[@]+"${mounts[@]}"} \
     -e OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
+    -e GIT_USER_NAME="$git_name" \
+    -e GIT_USER_EMAIL="$git_email" \
+    -e SKILL_SETS="$skill_sets" \
     "$IMAGE" >/dev/null
 elif [ ${#mounts[@]} -gt 0 ]; then
   echo "workspace: '$name' already exists; mounts are set at creation. Run 'workspace rm $name' first." >&2

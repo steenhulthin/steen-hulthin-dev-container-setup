@@ -4,9 +4,9 @@ A Podman image with an Ubuntu environment for working with coding agents, and a 
 
 ## What's in the image
 
-- Ubuntu 26.04, Python 3, Git, GitHub CLI, Node.js 24, tmux
+- Ubuntu 26.04, Python 3, Git, GitHub CLI, Node.js 24, tmux (with resurrect and continuum)
 - Agent harnesses: Claude Code, Codex, Mistral Vibe, pi
-- Skills: the Matt Pocock skills and PStack, both linked into the harnesses at start
+- Skill sets you choose per workspace: Matt Pocock's skills, PStack, Superpowers, Addy Osmani's agent-skills, and OpenSpec
 - Non-root user `dev` with passwordless `sudo`
 
 Nothing is logged in. Each workspace keeps its own logins.
@@ -48,6 +48,18 @@ bin/workspace myproject --mount ~/src/myproject
 
 Mounts are set when the workspace is created. To change them, remove the workspace and create it again. Only mount what the agents need.
 
+## Skill sets
+
+When you create a workspace, it asks which skill sets to install: Matt Pocock's skills, PStack, Superpowers, Addy Osmani's agent-skills, and OpenSpec. Answer with numbers, e.g. `1,3`, or leave it empty for none. To skip the question, set `WORKSPACE_SKILLS`:
+
+```bash
+WORKSPACE_SKILLS=mattpocock,openspec bin/workspace myproject
+```
+
+The ids are `mattpocock`, `pstack`, `superpowers`, `addyosmani`, and `openspec`. The choice is fixed when the workspace is created; to change it, `workspace rm` and create it again. If two chosen sets have a skill with the same name, the first one wins and a warning is printed at start.
+
+OpenSpec is a CLI, not a folder of skills. It is installed into the workspace's home folder at first start, which needs network access. Run `openspec init` in a project to generate its skills.
+
 ## Shells and sessions
 
 Each `bin/workspace myproject` is a tmux client of the session `main`, created on first connect. Shells and running processes live in the tmux server inside the container, so they survive you detaching or closing the terminal.
@@ -57,6 +69,8 @@ Each `bin/workspace myproject` is a tmux client of the session `main`, created o
 - **Several terminals at once:** every invocation is another client of the same session, and all clients show the same screen. For more shells, use tmux's windows and panes: `Ctrl-b c` for a new window, `Ctrl-b %` to split.
 
 Sessions survive closing the terminal, but not stopping the container. `workspace rm`, `workspace purge`, and a host reboot kill every shell and process in the workspace. The volume keeps your files and logins; it doesn't keep running processes.
+
+tmux-resurrect and tmux-continuum are installed. Continuum saves the layout (sessions, windows, panes, working directories) every 15 minutes into the volume, and restores it the next time tmux starts in the workspace. Programs that were running are not restarted. Save by hand with `Ctrl-b Ctrl-s`, restore with `Ctrl-b Ctrl-r`.
 
 ## Log in to the harnesses
 
@@ -70,7 +84,7 @@ Log in once per workspace. The credentials are saved in the workspace's volume.
 
 ## Persistence
 
-Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. tmux sessions don't: they stop with the container.
+Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. tmux sessions stop with the container, but their layout is restored (see above).
 
 ```bash
 bin/workspace rm myproject       # remove the container, keep the volume
