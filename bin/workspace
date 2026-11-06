@@ -2,7 +2,8 @@
 # Create, re-attach to, or remove a named workspace.
 #
 #   workspace <name>                    create the workspace, or re-attach to it
-#   workspace <name> --mount <dir>      as above, mounting <dir> at /home/dev/project
+#   workspace <name> --mount <dir>      as above, mounting <dir> instead of the default folder
+#                                       project files go in ~/workspaces/<name> (WORKSPACE_ROOT)
 #                                       asks which skill sets to install; set WORKSPACE_SKILLS
 #                                       (e.g. mattpocock,openspec) to skip the question
 #   workspace rm <name>                 remove the container, keep its volume
@@ -48,12 +49,12 @@ shift
 check_name "$name"
 container="ws-$name"
 
-mounts=()
+project_dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --mount)
       [ $# -ge 2 ] || usage
-      mounts+=(-v "$(realpath -e "$2"):/home/dev/project")
+      project_dir="$(realpath -e "$2")"
       shift 2
       ;;
     *) usage ;;
@@ -91,19 +92,41 @@ if ! podman container exists "$container"; then
   if [ -z "${WORKSPACE_SKILLS+x}" ] && [ -t 0 ]; then
     skill_sets="$(choose_skill_sets)"
   fi
+  # Without --mount, the project folder is a plain host folder, so it can be
+  # browsed and edited from the host. Keep it on the Linux filesystem, not /mnt/c.
+  if [ -z "$project_dir" ]; then
+    project_dir="${WORKSPACE_ROOT:-$HOME/workspaces}/$name"
+    mkdir -p "$project_dir"
+  fi
+  folder="${WORKSPACE_FOLDER-}"
+  if [ -z "${WORKSPACE_FOLDER+x}" ] && [ -t 0 ]; then
+    folder="$(ask "Folder name in the workspace's home for the project files" project)"
+  fi
+  folder="${folder:-project}"
+  check_name "$folder"
   podman run -d --name "$container" --hostname "$name" \
     --userns=keep-id \
     -v "$container:/home/dev" \
-    ${mounts[@]+"${mounts[@]}"} \
+    -v "$project_dir:/home/dev/$folder" \
+    --label "workspace.folder=$folder" \
     -e OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
     -e GIT_USER_NAME="$git_name" \
     -e GIT_USER_EMAIL="$git_email" \
     -e SKILL_SETS="$skill_sets" \
     "$IMAGE" >/dev/null
-elif [ ${#mounts[@]} -gt 0 ]; then
+elif [ -n "$project_dir" ]; then
   echo "workspace: '$name' already exists; mounts are set at creation. Run 'workspace rm $name' first." >&2
   exit 1
 fi
 
 podman start "$container" >/dev/null
-exec podman exec -it -w /home/dev "$container" tmux new -A -s main
+if [ -n "$project_dir" ]; then
+  echo "workspace: project files are in $project_dir (/home/dev/$folder in the workspace)" >&2
+  if [ -n "${WSL_DISTRO_NAME:-}" ] && command -v wslpath >/dev/null; then
+    echo "workspace: from Windows: $(wslpath -w "$project_dir")" >&2
+  fi
+fi
+# New tmux sessions start in the project folder. Workspaces created before the
+# folder was recorded have no label and start in the home folder.
+folder="$(podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container")"
+exec podman exec -it -w "/home/dev${folder:+/$folder}" "$container" tmux new -A -s main
