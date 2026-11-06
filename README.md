@@ -1,6 +1,6 @@
 # Steen Hulthin's Dev Workspaces
 
-A Podman image with an Ubuntu environment for working with coding agents, and a script that starts named, persistent workspaces from it. The agents run inside the container, so they can't touch the rest of your machine unless you mount something into the workspace.
+A Podman image with an Ubuntu environment for working with coding agents, and a script that starts named, persistent workspaces from it. The agents run inside the container, so they can't touch the rest of your machine except the project folder that each workspace mounts from the host.
 
 ## What's in the image
 
@@ -13,7 +13,7 @@ Nothing is logged in. Each workspace keeps its own logins.
 
 ## Prerequisites
 
-- Rootless Podman
+- Rootless Podman, on an Ubuntu host or inside a WSL Ubuntu distro (see [WSL](#wsl))
 - Ollama running on the host (optional, for local models), set up as described in [Ollama on the host](#ollama-on-the-host)
 
 ## Build the image
@@ -40,19 +40,33 @@ bin/workspace myproject
 
 This creates the container `ws-myproject` and the volume `ws-myproject`, then opens a tmux session named `main` in it. Running the same command later attaches to the same workspace and the same tmux session.
 
-Every workspace has a project folder on the host, mounted in the workspace's home. Creating a workspace asks what to call it there (default `project`, so `/home/dev/project`); set `WORKSPACE_FOLDER` to skip the question. By default it is `~/workspaces/<name>`, created for you; set `WORKSPACE_ROOT` to use another parent folder. To use an existing folder instead:
+### What it asks when it creates a workspace
+
+Creation asks these questions, only when stdin is a terminal and only the first time. The skill-set and folder questions have an environment variable that answers them without asking.
+
+| Question | Default | Skips the question |
+| --- | --- | --- |
+| Git `user.name` and `user.email` | the host's `git config --global` values | none; without a terminal the host values are used |
+| Skill sets to install (see [Skill sets](#skill-sets)) | none | `WORKSPACE_SKILLS` |
+| Folder name for the project files in the workspace's home | `project` | `WORKSPACE_FOLDER` |
+
+All answers are fixed when the container is created. To change them, `workspace rm` and create the workspace again. The git identity is written to the workspace's `~/.gitconfig` only if it isn't already set there, so an existing file wins and later edits survive restarts.
+
+### The project folder
+
+Every workspace has a project folder on the host, mounted in the workspace's home under the name you chose (`/home/dev/project` by default). New tmux sessions start in it. By default the host folder is `~/workspaces/<name>`, created for you; set `WORKSPACE_ROOT` to use another parent folder. To use an existing folder instead:
 
 ```bash
 bin/workspace myproject --mount ~/src/myproject
 ```
 
-Creating a workspace prints the project folder's host path. Open it in your file manager or editor like any other folder; files you create there are owned by you.
+Creating a workspace prints the folder's host path. Open it in your file manager or editor like any other folder; files you create there are owned by you. Only mount what the agents need.
 
-On WSL, run Podman and `bin/workspace` inside the WSL distro. The script also prints the Windows path of the folder, of the form `\\wsl.localhost\<distro>\home\...`, which you can open in Explorer. Keep the folder on the Linux filesystem; don't put it under `/mnt/c`, where permissions and speed suffer.
+`workspace rm` and `workspace purge` never delete the project folder. Only `purge` removes the home volume.
 
-`workspace rm` and `workspace purge` never delete the project folder. Only the home volume is removed by `purge`.
+### WSL
 
-Mounts are set when the workspace is created. To change them, remove the workspace and create it again. Only mount what the agents need.
+Run Podman and `bin/workspace` inside the WSL distro. The script also prints the Windows path of the project folder, of the form `\\wsl.localhost\<distro>\home\...`, which you can open in Explorer. Keep the folder on the Linux filesystem; don't put it under `/mnt/c`, where permissions and speed suffer.
 
 ## Skill sets
 
@@ -62,7 +76,7 @@ When you create a workspace, it asks which skill sets to install: Matt Pocock's 
 WORKSPACE_SKILLS=mattpocock,openspec bin/workspace myproject
 ```
 
-The ids are `mattpocock`, `pstack`, `superpowers`, `addyosmani`, and `openspec`. The choice is fixed when the workspace is created; to change it, `workspace rm` and create it again. If two chosen sets have a skill with the same name, the first one wins and a warning is printed at start.
+The ids are `mattpocock`, `pstack`, `superpowers`, `addyosmani`, and `openspec`. The sets are in the image; the choice decides which are linked into the harnesses at each start. If two chosen sets have a skill with the same name, the first one wins and a warning is printed at start.
 
 OpenSpec is a CLI, not a folder of skills. It is installed into the workspace's home folder at first start, which needs network access. Run `openspec init` in a project to generate its skills.
 
@@ -90,15 +104,17 @@ Log in once per workspace. The credentials are saved in the workspace's volume.
 
 ## Persistence
 
-Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. tmux sessions stop with the container, but their layout is restored (see above).
+Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. The project folder lives on the host and is never part of the volume. tmux sessions stop with the container, but their layout is restored (see above).
 
 ```bash
 bin/workspace rm myproject       # remove the container, keep the volume
-bin/workspace myproject          # attach later, with files and logins as they were
+bin/workspace myproject          # create again; the volume and project folder are reused
 bin/workspace purge myproject    # remove the container and the volume
 ```
 
-`purge` deletes everything in the workspace. There is no undo.
+`purge` deletes the home volume: logins, history, and everything else in the home folder outside the project folder. There is no undo.
+
+Recreating a workspace after `rm` asks the creation questions again, and `--mount` has to be passed again.
 
 A rebuilt image doesn't change an existing workspace's home folder, because the volume already has content. To start a workspace from the new image, keep the work you need, then run `workspace purge` and create the workspace again.
 
@@ -134,4 +150,4 @@ Once Ollama answers, pull a model on the host and add it to pi's `models.json` i
 
 ## Trust
 
-The image installs the agent harnesses with their vendors' installers, and the skills come from GitHub at build time. Rebuilding pulls whatever those sources serve at that point.
+The image installs the agent harnesses with their vendors' installers, and the skills come from GitHub at build time. Rebuilding pulls whatever those sources serve at that point, except for the pinned ones: the tmux plugins (`tmux-resurrect`, `tmux-continuum`), Superpowers, and Addy Osmani's agent-skills are fixed to a release tag in the `Containerfile`, and OpenSpec is installed at a fixed version at first start.
