@@ -43,6 +43,9 @@ root = Path(os.environ["TEST_ROOT"])
 with (root / "calls").open("a") as log:
     log.write(json.dumps(args) + "\n")
 home = root / "container-home"
+if args[0] == os.environ.get("TEST_FAIL_COMMAND"):
+    print("podman: simulated runtime failure", file=sys.stderr)
+    sys.exit(int(os.environ.get("TEST_FAIL_STATUS", "125")))
 if args[:2] == ["container", "exists"]:
     sys.exit(0 if (root / "exists").exists() else 1)
 if args[0] == "run":
@@ -112,11 +115,18 @@ class WorkspaceTests(unittest.TestCase):
         env = dict(self.env)
         if key is not None:
             env["OPENAI_API_KEY"] = key
-        return subprocess.run(
+        result = subprocess.run(
             [str(WORKSPACE), *map(str, args)],
             env=env, stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=10,
         )
+        if result.returncode:
+            self.assertEqual(result.stderr.count("usage: workspace"), 1, result.stderr)
+            self.assertIn("workspace: failed", result.stderr)
+            self.assertLess(result.stderr.index("workspace: failed"), result.stderr.index("usage: workspace"))
+        else:
+            self.assertNotIn("usage: workspace", result.stderr)
+        return result
 
     def calls(self):
         path = self.root / "calls"
@@ -275,6 +285,39 @@ class WorkspaceTests(unittest.TestCase):
                 result = self.run_workspace(*args)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.calls(), [])
+
+    def test_missing_jq_explains_ubuntu_installation(self):
+        path = self.root / "without-jq"
+        path.mkdir()
+        for command in ("bash", "realpath"):
+            (path / command).symlink_to(shutil.which(command))
+        self.env["PATH"] = str(path)
+        result = self.run_workspace("demo", "--models-file", self.source)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("JSON validation tool", result.stderr)
+        self.assertIn("Ubuntu host", result.stderr)
+        self.assertIn("sudo apt-get update && sudo apt-get install -y jq", result.stderr)
+        self.assertIn("run your workspace command again", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_podman_failures_preserve_status_and_show_error_then_help(self):
+        cases = [
+            ("container", ("demo",)),
+            ("run", ("demo",)),
+            ("start", ("demo",)),
+            ("inspect", ("demo",)),
+            ("exec", ("demo",)),
+            ("ps", ("ls",)),
+            ("volume", ("purge", "demo")),
+        ]
+        for command, args in cases:
+            with self.subTest(command=command):
+                self.env["TEST_FAIL_COMMAND"] = command
+                result = self.run_workspace(*args, key="secret-do-not-log")
+                self.assertEqual(result.returncode, 125)
+                self.assertIn("podman: simulated runtime failure", result.stderr)
+                self.assertLess(result.stderr.index("simulated runtime failure"), result.stderr.index("usage: workspace"))
+                self.assertNotIn("secret-do-not-log", result.stderr)
 
     def test_help_and_verbose_subcommands(self):
         for flag in ("--help", "-h"):

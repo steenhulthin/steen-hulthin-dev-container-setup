@@ -50,6 +50,8 @@ bin/workspace --verbose rm myproject
 
 `--verbose` works before or after the workspace name or subcommand. Commands are printed with shell-safe quoting; their arguments can include personal information such as your git identity.
 
+Failed invocations print the error followed by usage/help on stderr, preserving the failure's exit status. `--help` and `-h` print help on stdout and exit successfully.
+
 ### What it asks when it creates a workspace
 
 Creation asks these questions, only when stdin is a terminal and only the first time. The skill-set and folder questions have an environment variable that answers them without asking.
@@ -164,7 +166,15 @@ For a Chat Completions endpoint, use `openai-completions` and its required authe
 
 ### Importing and replacing configuration
 
-Importing requires `jq` on the host. The script checks JSON syntax and basic provider/model structure before creating or starting a container; pi performs full configuration validation. Invalid input leaves the existing configuration untouched. JSON must not contain trailing commas.
+Importing requires `jq`, a JSON validation tool, on the host. Install it on Ubuntu with:
+
+```bash
+sudo apt-get update && sudo apt-get install -y jq
+```
+
+Then run your workspace command again. No host `jq` is needed when you do not use `--models-file`.
+
+The script checks JSON syntax and basic provider/model structure before creating or starting a container; pi performs full configuration validation. Invalid input leaves the existing configuration untouched. JSON must not contain trailing commas.
 
 An identical file can be imported again. A different existing file—including the default Ollama configuration—is protected unless you explicitly allow replacement:
 

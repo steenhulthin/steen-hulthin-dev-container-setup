@@ -33,8 +33,19 @@ print_usage() {
     'Export OPENAI_API_KEY to forward it to new tmux shells (not saved in models.json).'
 }
 
+# An EXIT trap covers both explicit validation errors and unexpected command
+# failures. Do not print command arguments here: they may contain credentials.
+on_exit() {
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'workspace: failed (exit status %s).\n\n' "$status" >&2
+    print_usage >&2
+  fi
+}
+trap on_exit EXIT
+
 usage() {
-  print_usage >&2
+  echo "workspace: invalid usage; check the arguments and required option values" >&2
   exit 2
 }
 
@@ -137,7 +148,12 @@ if [ -n "$models_file" ]; then
     echo "workspace: --models-file must be a readable regular file" >&2
     exit 2
   fi
-  command -v jq >/dev/null || { echo "workspace: --models-file requires jq on the host" >&2; exit 2; }
+  if ! command -v jq >/dev/null; then
+    echo "workspace: --models-file needs jq, a JSON validation tool, installed on your Ubuntu host." >&2
+    echo "Install it with: sudo apt-get update && sudo apt-get install -y jq" >&2
+    echo "Then run your workspace command again." >&2
+    exit 2
+  fi
   if ! jq -e -s "$models_filter" "$models_file" >/dev/null 2>&1; then
     echo "workspace: invalid models.json; expected one JSON object with a providers object and valid model IDs" >&2
     exit 2
@@ -165,7 +181,15 @@ choose_skill_sets() {
 }
 
 log_podman container exists "$container"
-if ! podman container exists "$container"; then
+container_exists=false
+if podman container exists "$container"; then
+  container_exists=true
+else
+  status=$?
+  # Status 1 means absent; other statuses indicate a Podman failure.
+  [ "$status" -eq 1 ] || exit "$status"
+fi
+if ! "$container_exists"; then
   git_name="$(git config --global user.name 2>/dev/null || true)"
   git_email="$(git config --global user.email 2>/dev/null || true)"
   if [ -t 0 ]; then
@@ -266,4 +290,5 @@ if [ -n "${OPENAI_API_KEY:-}" ]; then connect_args+=(-e OPENAI_API_KEY); fi
 # their environment; new panes receive the current key.
 connect_args+=("$container" tmux new -A -s main)
 log_podman "${connect_args[@]}"
-exec podman "${connect_args[@]}"
+# Keep the parent shell so a failed connection also runs the EXIT help handler.
+podman "${connect_args[@]}"
