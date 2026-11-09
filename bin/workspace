@@ -79,6 +79,12 @@ check_name() {
 
 [[ $# -ge 1 ]] || usage
 
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "workspace: warning: OPENAI_API_KEY is not set or is empty; it will not be forwarded to the workspace." >&2
+  echo 'For API-key authentication, run: export OPENAI_API_KEY="your-token"' >&2
+  echo "Then reconnect and start pi in a new tmux window/pane. Other authentication methods may still work." >&2
+fi
+
 case "$1" in
   ls)
     [[ $# -eq 1 ]] || usage

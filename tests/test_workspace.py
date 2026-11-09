@@ -319,6 +319,25 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertLess(result.stderr.index("simulated runtime failure"), result.stderr.index("usage: workspace"))
                 self.assertNotIn("secret-do-not-log", result.stderr)
 
+    def test_missing_or_empty_api_key_warns_without_failing(self):
+        for key in (None, ""):
+            with self.subTest(key=key):
+                result = self.run_workspace("demo", key=key)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("warning: OPENAI_API_KEY is not set or is empty", result.stderr)
+                self.assertIn('export OPENAI_API_KEY="your-token"', result.stderr)
+                self.assertIn("new tmux window/pane", result.stderr)
+                self.assertIn("Other authentication methods may still work", result.stderr)
+        result = self.run_workspace("ls")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("warning: OPENAI_API_KEY", result.stderr)
+
+    def test_set_api_key_does_not_warn_or_expose_value(self):
+        result = self.run_workspace("--verbose", "demo", key="secret-do-not-log")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("warning: OPENAI_API_KEY", result.stderr)
+        self.assertNotIn("secret-do-not-log", result.stdout + result.stderr)
+
     def test_help_and_verbose_subcommands(self):
         for flag in ("--help", "-h"):
             result = self.run_workspace(flag)

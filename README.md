@@ -188,6 +188,8 @@ Rebuild the image to enable this feature. For containers created from an older i
 
 ### Token forwarding
 
+`workspace` prints a nonfatal warning whenever `OPENAI_API_KEY` is unset or empty, without inspecting `models.json`. The warning also appears for `ls`, `rm`, and `purge`, but not explicit `--help`/`-h`. You can ignore it when using other authentication methods or a local endpoint that needs no key.
+
 Export `OPENAI_API_KEY` on each connection that needs it. The script forwards it by name to the tmux client, not as a literal command argument or container-creation setting, so `--verbose` does not expose the value. It is not written into `models.json` or saved by this feature.
 
 On attachment, tmux updates the session environment. **New windows/panes** receive the current token; existing shells and running pi processes keep their old environment. After changing the token—or connecting without it—open a new pane and start pi there. An existing tmux server may also retain its original process environment until stopped. Do not treat environment forwarding as a secret vault: programs running as the workspace user can access the injected credential.
