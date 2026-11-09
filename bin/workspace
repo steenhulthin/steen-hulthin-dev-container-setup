@@ -13,12 +13,47 @@ set -euo pipefail
 IMAGE="${WORKSPACE_IMAGE:-localhost/dev-workspace:latest}"
 OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://host.containers.internal:11434/v1}"
 
+print_usage() {
+  printf '%s\n' \
+    'usage: workspace [--verbose] <name> [--mount <dir>]' \
+    '       workspace [--verbose] ls' \
+    '       workspace [--verbose] rm <name>' \
+    '       workspace [--verbose] purge <name>' \
+    '       workspace -h | --help' \
+    '' \
+    'Options:' \
+    '  --mount <dir>  Mount an existing project folder (creation only).' \
+    '  --verbose      Print Podman commands to stderr before running them.' \
+    '  -h, --help     Show this help and exit.'
+}
+
 usage() {
-  echo "usage: workspace <name> [--mount <dir>]" >&2
-  echo "       workspace ls" >&2
-  echo "       workspace rm <name>" >&2
-  echo "       workspace purge <name>" >&2
+  print_usage >&2
   exit 2
+}
+
+verbose=false
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --verbose) verbose=true; shift ;;
+    -h|--help) print_usage; exit 0 ;;
+    --mount)
+      [ $# -ge 2 ] || usage
+      args+=("$1" "$2")
+      shift 2
+      ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
+
+log_podman() {
+  if "$verbose"; then
+    printf '+ podman' >&2
+    printf ' %q' "$@" >&2
+    printf '\n' >&2
+  fi
 }
 
 check_name() {
@@ -30,14 +65,17 @@ check_name() {
 case "$1" in
   ls)
     [[ $# -eq 1 ]] || usage
+    log_podman ps -a --filter "name=^ws-" --format "table {{.Names}}\t{{.Status}}"
     podman ps -a --filter "name=^ws-" --format "table {{.Names}}\t{{.Status}}" | sed 's/^ws-//'
     exit 0
     ;;
   rm|purge)
     [[ $# -eq 2 ]] || usage
     check_name "$2"
+    log_podman rm -f "ws-$2"
     podman rm -f "ws-$2" >/dev/null 2>&1 || true
     if [ "$1" = purge ]; then
+      log_podman volume rm "ws-$2"
       podman volume rm "ws-$2"
     fi
     exit 0
@@ -81,6 +119,7 @@ choose_skill_sets() {
   (IFS=,; echo "${picked[*]-}")
 }
 
+log_podman container exists "$container"
 if ! podman container exists "$container"; then
   git_name="$(git config --global user.name 2>/dev/null || true)"
   git_email="$(git config --global user.email 2>/dev/null || true)"
@@ -104,21 +143,26 @@ if ! podman container exists "$container"; then
   fi
   folder="${folder:-project}"
   check_name "$folder"
-  podman run -d --name "$container" --hostname "$name" \
-    --userns=keep-id \
-    -v "$container:/home/dev" \
-    -v "$project_dir:/home/dev/$folder" \
-    --label "workspace.folder=$folder" \
-    -e OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
-    -e GIT_USER_NAME="$git_name" \
-    -e GIT_USER_EMAIL="$git_email" \
-    -e SKILL_SETS="$skill_sets" \
-    "$IMAGE" >/dev/null
+  create_args=(
+    run -d --name "$container" --hostname "$name"
+    --userns=keep-id
+    -v "$container:/home/dev"
+    -v "$project_dir:/home/dev/$folder"
+    --label "workspace.folder=$folder"
+    -e OLLAMA_BASE_URL="$OLLAMA_BASE_URL"
+    -e GIT_USER_NAME="$git_name"
+    -e GIT_USER_EMAIL="$git_email"
+    -e SKILL_SETS="$skill_sets"
+    "$IMAGE"
+  )
+  log_podman "${create_args[@]}"
+  podman "${create_args[@]}" >/dev/null
 elif [ -n "$project_dir" ]; then
   echo "workspace: '$name' already exists; mounts are set at creation. Run 'workspace rm $name' first." >&2
   exit 1
 fi
 
+log_podman start "$container"
 podman start "$container" >/dev/null
 if [ -n "$project_dir" ]; then
   echo "workspace: project files are in $project_dir (/home/dev/$folder in the workspace)" >&2
@@ -128,5 +172,7 @@ if [ -n "$project_dir" ]; then
 fi
 # New tmux sessions start in the project folder. Workspaces created before the
 # folder was recorded have no label and start in the home folder.
+log_podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container"
 folder="$(podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container")"
+log_podman exec -it -w "/home/dev${folder:+/$folder}" "$container" tmux new -A -s main
 exec podman exec -it -w "/home/dev${folder:+/$folder}" "$container" tmux new -A -s main

@@ -40,6 +40,16 @@ bin/workspace myproject
 
 This creates the container `ws-myproject` and the volume `ws-myproject`, then opens a tmux session named `main` in it. Running the same command later attaches to the same workspace and the same tmux session.
 
+Use `bin/workspace --help` (or `-h`) to show usage. Add `--verbose` to print the underlying Podman commands to stderr before they run:
+
+```bash
+bin/workspace --verbose myproject
+bin/workspace ls --verbose
+bin/workspace --verbose rm myproject
+```
+
+`--verbose` works before or after the workspace name or subcommand. Commands are printed with shell-safe quoting; their arguments can include personal information such as your git identity.
+
 ### What it asks when it creates a workspace
 
 Creation asks these questions, only when stdin is a terminal and only the first time. The skill-set and folder questions have an environment variable that answers them without asking.
