@@ -28,9 +28,10 @@ if echo ",${SKILL_SETS:-}," | grep -q ',openspec,' && ! command -v openspec >/de
     || echo "init-workspace: could not install openspec; it will retry at the next start" >&2
 fi
 
-# Point pi at Ollama. Written only when missing, so edits you make survive restarts.
+# Point pi at Ollama unless workspace is importing a supplied configuration.
+# Written only when missing, so edits you make survive restarts.
 pi_models="$HOME/.pi/agent/models.json"
-if [ ! -f "$pi_models" ]; then
+if [ "${WORKSPACE_MODELS_IMPORT:-0}" != 1 ] && [ ! -f "$pi_models" ]; then
   mkdir -p "$(dirname "$pi_models")"
   jq -n --arg url "${OLLAMA_BASE_URL:-http://host.containers.internal:11434/v1}" \
     '{providers: {ollama: {baseUrl: $url, api: "openai-completions", apiKey: "ollama", models: []}}}' \

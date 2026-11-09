@@ -2,6 +2,8 @@
 # Create, re-attach to, or remove a named workspace.
 #
 #   workspace <name>                    create the workspace, or re-attach to it
+#   workspace <name> --models-file <file>  import pi's models.json; --replace-models to overwrite
+#                                       export OPENAI_API_KEY to make it available in new tmux shells
 #   workspace <name> --mount <dir>      as above, mounting <dir> instead of the default folder
 #                                       project files go in ~/workspaces/<name> (WORKSPACE_ROOT)
 #                                       asks which skill sets to install; set WORKSPACE_SKILLS
@@ -15,16 +17,20 @@ OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://host.containers.internal:11434/v1}"
 
 print_usage() {
   printf '%s\n' \
-    'usage: workspace [--verbose] <name> [--mount <dir>]' \
+    'usage: workspace [--verbose] <name> [--mount <dir>] [--models-file <file>] [--replace-models]' \
     '       workspace [--verbose] ls' \
     '       workspace [--verbose] rm <name>' \
     '       workspace [--verbose] purge <name>' \
     '       workspace -h | --help' \
     '' \
     'Options:' \
-    '  --mount <dir>  Mount an existing project folder (creation only).' \
-    '  --verbose      Print Podman commands to stderr before running them.' \
-    '  -h, --help     Show this help and exit.'
+    '  --mount <dir>         Mount an existing project folder (creation only).' \
+    '  --models-file <file>  Copy a models.json into persistent pi configuration.' \
+    '  --replace-models      Allow replacing a different existing models.json.' \
+    '  --verbose             Print Podman commands to stderr before running them.' \
+    '  -h, --help            Show this help and exit.' \
+    '' \
+    'Export OPENAI_API_KEY to forward it to new tmux shells (not saved in models.json).'
 }
 
 usage() {
@@ -38,7 +44,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --verbose) verbose=true; shift ;;
     -h|--help) print_usage; exit 0 ;;
-    --mount)
+    --mount|--models-file)
       [ $# -ge 2 ] || usage
       args+=("$1" "$2")
       shift 2
@@ -88,6 +94,8 @@ check_name "$name"
 container="ws-$name"
 
 project_dir=""
+models_file=""
+replace_models=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --mount)
@@ -95,9 +103,41 @@ while [ $# -gt 0 ]; do
       project_dir="$(realpath -e "$2")"
       shift 2
       ;;
+    --models-file)
+      [ $# -ge 2 ] || usage
+      models_file="$(realpath -e "$2")"
+      shift 2
+      ;;
+    --replace-models) replace_models=true; shift ;;
     *) usage ;;
   esac
 done
+if "$replace_models" && [ -z "$models_file" ]; then usage; fi
+
+# Validate only the basic structure; pi validates API-specific fields itself.
+# Slurp to reject files containing multiple JSON documents. Never print file
+# contents in errors: a supplied configuration could contain literal secrets.
+models_filter='
+  length == 1 and (.[0] |
+    type == "object" and (.providers | type == "object") and
+    all(.providers[];
+      type == "object" and
+      (if has("models") then
+        .models | type == "array" and all(.[];
+          type == "object" and (.id | type == "string" and length > 0))
+      else true end)))
+'
+if [ -n "$models_file" ]; then
+  if [ ! -f "$models_file" ] || [ ! -r "$models_file" ]; then
+    echo "workspace: --models-file must be a readable regular file" >&2
+    exit 2
+  fi
+  command -v jq >/dev/null || { echo "workspace: --models-file requires jq on the host" >&2; exit 2; }
+  if ! jq -e -s "$models_filter" "$models_file" >/dev/null 2>&1; then
+    echo "workspace: invalid models.json; expected one JSON object with a providers object and valid model IDs" >&2
+    exit 2
+  fi
+fi
 
 # Ask once, at creation, for the git identity. Defaults to the host's.
 ask() {
@@ -153,8 +193,10 @@ if ! podman container exists "$container"; then
     -e GIT_USER_NAME="$git_name"
     -e GIT_USER_EMAIL="$git_email"
     -e SKILL_SETS="$skill_sets"
-    "$IMAGE"
   )
+  # Skip the default Ollama file while a supplied configuration is being imported.
+  if [ -n "$models_file" ]; then create_args+=(-e WORKSPACE_MODELS_IMPORT=1); fi
+  create_args+=("$IMAGE")
   log_podman "${create_args[@]}"
   podman "${create_args[@]}" >/dev/null
 elif [ -n "$project_dir" ]; then
@@ -164,6 +206,37 @@ fi
 
 log_podman start "$container"
 podman start "$container" >/dev/null
+if [ -n "$models_file" ]; then
+  # Stage and validate inside the volume, then atomically replace the target.
+  # The JSON is sent on stdin, unchanged and without expanding credentials.
+  import_script='
+    set -eu
+    umask 077
+    dir="$HOME/.pi/agent"
+    mkdir -p "$dir"
+    staged="$(mktemp "$dir/.models.json.XXXXXX")"
+    trap '\''rm -f "$staged"'\'' EXIT
+    trap '\''exit 1'\'' HUP INT TERM
+    cat > "$staged"
+    if ! jq -e -s "$2" "$staged" >/dev/null 2>&1; then
+      echo "workspace: invalid models.json; import cancelled" >&2
+      exit 2
+    fi
+    target="$dir/models.json"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      if cmp -s "$staged" "$target"; then exit 0; fi
+      if [ "$1" != true ]; then
+        echo "workspace: models.json already exists and differs; use --replace-models to overwrite it" >&2
+        exit 1
+      fi
+    fi
+    mv -fT "$staged" "$target"
+  '
+  import_args=(exec -i "$container" sh -c "$import_script" import-models "$replace_models" "$models_filter")
+  log_podman "${import_args[@]}"
+  podman "${import_args[@]}" < "$models_file"
+  echo "workspace: pi models imported from $models_file" >&2
+fi
 if [ -n "$project_dir" ]; then
   echo "workspace: project files are in $project_dir (/home/dev/$folder in the workspace)" >&2
   if [ -n "${WSL_DISTRO_NAME:-}" ] && command -v wslpath >/dev/null; then
@@ -174,5 +247,12 @@ fi
 # folder was recorded have no label and start in the home folder.
 log_podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container"
 folder="$(podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container")"
-log_podman exec -it -w "/home/dev${folder:+/$folder}" "$container" tmux new -A -s main
-exec podman exec -it -w "/home/dev${folder:+/$folder}" "$container" tmux new -A -s main
+connect_args=(exec -it -w "/home/dev${folder:+/$folder}")
+# Passing the variable name lets Podman resolve the host value without including
+# the token in command arguments, verbose output, or container configuration.
+if [ -n "${OPENAI_API_KEY:-}" ]; then connect_args+=(-e OPENAI_API_KEY); fi
+# tmux.conf updates the session environment on attach. Existing shells keep
+# their environment; new panes receive the current key.
+connect_args+=("$container" tmux new -A -s main)
+log_podman "${connect_args[@]}"
+exec podman "${connect_args[@]}"

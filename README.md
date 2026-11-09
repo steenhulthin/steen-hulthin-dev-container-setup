@@ -112,6 +112,74 @@ Log in once per workspace. The credentials are saved in the workspace's volume.
 - **pi:** run `pi`, then `/login` and pick a provider. Claude, ChatGPT, and Mistral are all options; which ones work with a subscription, and which need an API key, depends on each provider.
 - **GitHub:** run `gh auth login`.
 
+## Configure pi models and endpoints
+
+Supply a host `models.json` to configure direct OpenAI access or an OpenAI-compatible endpoint:
+
+```bash
+export OPENAI_API_KEY="your-token"
+bin/workspace myproject --models-file ~/config/pi/models.json
+```
+
+`--models-file` copies the file unchanged into `/home/dev/.pi/agent/models.json` in the persistent home volume, with owner-only permissions. It does not mount the host file, expand credentials, discover models, or configure the other harnesses. Host edits do not propagate automatically; pass the option again to import them. Only import trusted configurations: pi supports credential commands as well as environment references.
+
+For direct OpenAI, pi already has a model catalog:
+
+```json
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "openai": {
+      "apiKey": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+For a compatible gateway using the Responses API and an `api-key` header:
+
+```json
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "local-openai": {
+      "baseUrl": "https://gateway.example.com/openai/v1/",
+      "api": "openai-responses",
+      "apiKey": "$OPENAI_API_KEY",
+      "authHeader": false,
+      "headers": {
+        "api-key": "$OPENAI_API_KEY"
+      },
+      "models": [
+        { "id": "your-chat-model", "input": ["text"] }
+      ]
+    }
+  }
+}
+```
+
+For a Chat Completions endpoint, use `openai-completions` and its required authentication settings instead. Define the compatible provider's model IDs explicitly; add capability and limit metadata as needed. Image-generation models need their own supported pi/API configuration, not an ordinary chat-model entry.
+
+### Importing and replacing configuration
+
+Importing requires `jq` on the host. The script checks JSON syntax and basic provider/model structure before creating or starting a container; pi performs full configuration validation. Invalid input leaves the existing configuration untouched. JSON must not contain trailing commas.
+
+An identical file can be imported again. A different existing file—including the default Ollama configuration—is protected unless you explicitly allow replacement:
+
+```bash
+bin/workspace myproject --models-file ~/config/pi/models.json --replace-models
+```
+
+Replacement is atomic and replaces the entire file, not a merge; keep a backup if needed. Without `--models-file`, the workspace retains its existing configuration. New workspaces without a supplied file still get the default Ollama configuration.
+
+Rebuild the image to enable this feature. For containers created from an older image, run `workspace rm <name>` and recreate them, keeping the home volume. Pass `--mount` again if you used a custom project folder, and `--replace-models` if the volume contains a different configuration.
+
+### Token forwarding
+
+Export `OPENAI_API_KEY` on each connection that needs it. The script forwards it by name to the tmux client, not as a literal command argument or container-creation setting, so `--verbose` does not expose the value. It is not written into `models.json` or saved by this feature.
+
+On attachment, tmux updates the session environment. **New windows/panes** receive the current token; existing shells and running pi processes keep their old environment. After changing the token—or connecting without it—open a new pane and start pi there. An existing tmux server may also retain its original process environment until stopped. Do not treat environment forwarding as a secret vault: programs running as the workspace user can access the injected credential.
+
 ## Persistence
 
 Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. The project folder lives on the host and is never part of the volume. tmux sessions stop with the container, but their layout is restored (see above).
