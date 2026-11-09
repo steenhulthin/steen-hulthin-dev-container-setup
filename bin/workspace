@@ -4,7 +4,7 @@
 #   workspace <name>                    create the workspace, or re-attach to it
 #   workspace <name> --models-file <file>  import pi's models.json; --replace-models to overwrite
 #                                       export OPENAI_API_KEY to make it available in new tmux shells
-#   workspace <name> --mount <dir>      as above, mounting <dir> instead of the default folder
+#   workspace <name> --mount <dir>      mount <dir> instead of the default folder; create it if missing
 #                                       project files go in ~/workspaces/<name> (WORKSPACE_ROOT)
 #                                       asks which skill sets to install; set WORKSPACE_SKILLS
 #                                       (e.g. mattpocock,openspec) to skip the question
@@ -24,7 +24,7 @@ print_usage() {
     '       workspace -h | --help' \
     '' \
     'Options:' \
-    '  --mount <dir>         Mount an existing project folder (creation only).' \
+    '  --mount <dir>         Mount a project folder; create it if missing (creation only).' \
     '  --models-file <file>  Copy a models.json into persistent pi configuration.' \
     '  --replace-models      Allow replacing a different existing models.json.' \
     '  --verbose             Print Podman commands to stderr before running them.' \
@@ -100,7 +100,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --mount)
       [ $# -ge 2 ] || usage
-      project_dir="$(realpath -e "$2")"
+      [ -n "$2" ] || usage
+      project_dir="$(realpath -m -- "$2")"
+      if [ -e "$project_dir" ] && [ ! -d "$project_dir" ]; then
+        echo "workspace: --mount path is not a directory: $project_dir" >&2
+        exit 2
+      fi
       shift 2
       ;;
     --models-file)
@@ -171,18 +176,24 @@ if ! podman container exists "$container"; then
   if [ -z "${WORKSPACE_SKILLS+x}" ] && [ -t 0 ]; then
     skill_sets="$(choose_skill_sets)"
   fi
-  # Without --mount, the project folder is a plain host folder, so it can be
-  # browsed and edited from the host. Keep it on the Linux filesystem, not /mnt/c.
-  if [ -z "$project_dir" ]; then
-    project_dir="${WORKSPACE_ROOT:-$HOME/workspaces}/$name"
-    mkdir -p "$project_dir"
-  fi
   folder="${WORKSPACE_FOLDER-}"
   if [ -z "${WORKSPACE_FOLDER+x}" ] && [ -t 0 ]; then
     folder="$(ask "Folder name in the workspace's home for the project files" project)"
   fi
   folder="${folder:-project}"
   check_name "$folder"
+  # Only create folders after validating creation settings and confirming the
+  # container does not exist. Keep project files on Linux, not /mnt/c.
+  if [ -z "$project_dir" ]; then
+    project_dir="${WORKSPACE_ROOT:-$HOME/workspaces}/$name"
+    mkdir -p "$project_dir"
+  elif [ ! -d "$project_dir" ]; then
+    if ! mkdir -p -- "$project_dir"; then
+      echo "workspace: could not create --mount directory: $project_dir" >&2
+      exit 1
+    fi
+    echo "workspace: warning: created missing --mount directory: $project_dir" >&2
+  fi
   create_args=(
     run -d --name "$container" --hostname "$name"
     --userns=keep-id

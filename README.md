@@ -64,11 +64,13 @@ All answers are fixed when the container is created. To change them, `workspace 
 
 ### The project folder
 
-Every workspace has a project folder on the host, mounted in the workspace's home under the name you chose (`/home/dev/project` by default). New tmux sessions start in it. By default the host folder is `~/workspaces/<name>`, created for you; set `WORKSPACE_ROOT` to use another parent folder. To use an existing folder instead:
+Every workspace has a project folder on the host, mounted in the workspace's home under the name you chose (`/home/dev/project` by default). New tmux sessions start in it. By default the host folder is `~/workspaces/<name>`, created for you; set `WORKSPACE_ROOT` to use another parent folder. To choose another folder instead:
 
 ```bash
 bin/workspace myproject --mount ~/src/myproject
 ```
+
+If the `--mount` folder does not exist, the script creates it (including missing parent directories) and prints a warning with its absolute path. Existing folders are reused without a creation warning; paths that are not directories are rejected. A rejected mount change on an existing workspace does not create the requested folder.
 
 Creating a workspace prints the folder's host path. Open it in your file manager or editor like any other folder; files you create there are owned by you. Only mount what the agents need.
 

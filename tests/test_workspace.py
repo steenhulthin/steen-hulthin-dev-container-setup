@@ -216,6 +216,55 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.target.read_bytes(), self.source.read_bytes())
 
+    def test_missing_mount_is_created_with_absolute_path_warning(self):
+        mount = self.root / "missing parent" / "project with spaces"
+        relative = os.path.relpath(mount)
+        result = self.run_workspace("demo", "--mount", relative)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(mount.is_dir())
+        self.assertIn(f"warning: created missing --mount directory: {mount}", result.stderr)
+        creation = next(call for call in self.calls() if call[0] == "run")
+        self.assertIn(f"{mount}:/home/dev/project", creation)
+
+    def test_existing_mount_is_reused_without_creation_warning(self):
+        mount = self.root / "existing project"
+        mount.mkdir()
+        sentinel = mount / "keep.txt"
+        sentinel.write_text("keep")
+        result = self.run_workspace("demo", "--mount", mount)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("created missing --mount", result.stderr)
+        self.assertEqual(sentinel.read_text(), "keep")
+
+    def test_rejected_mount_change_does_not_create_directory(self):
+        self.existing(self.source.read_text())
+        mount = self.root / "do-not-create" / "project"
+        result = self.run_workspace("demo", "--mount", mount)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mounts are set at creation", result.stderr)
+        self.assertFalse(mount.parent.exists())
+        self.assertNotIn("created missing --mount", result.stderr)
+
+    def test_mount_cannot_be_a_regular_file(self):
+        result = self.run_workspace("demo", "--mount", self.source)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not a directory", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_mount_creation_failure_does_not_create_container(self):
+        mount = self.source / "project"
+        result = self.run_workspace("demo", "--mount", mount)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("could not create --mount directory", result.stderr)
+        self.assertFalse(any(call[0] == "run" for call in self.calls()))
+
+    def test_invalid_creation_settings_do_not_create_mount(self):
+        self.env["WORKSPACE_FOLDER"] = "invalid/folder"
+        mount = self.root / "do-not-create"
+        result = self.run_workspace("demo", "--mount", mount)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(mount.exists())
+
     def test_bad_usage_and_missing_file(self):
         for args in [(), ("demo", "--replace-models"), ("demo", "--models-file"),
                      ("demo", "--models-file", self.root / "absent"),
