@@ -5,6 +5,7 @@
 #   workspace <name> --models-file <file>  import pi's models.json; --replace-models to overwrite
 #                                       export OPENAI_API_KEY to make it available in new tmux shells
 #   workspace <name> --mount <dir>      mount <dir> instead of the default folder; create it if missing
+#                                       a relative <dir> is resolved against $HOME
 #                                       project files go in ~/workspaces/<name> (WORKSPACE_ROOT)
 #                                       asks which skill sets to install; set WORKSPACE_SKILLS
 #                                       (e.g. mattpocock,openspec) to skip the question
@@ -25,6 +26,7 @@ print_usage() {
     '' \
     'Options:' \
     '  --mount <dir>         Mount a project folder; create it if missing (creation only).' \
+    '                        Relative paths are resolved against $HOME.' \
     '  --models-file <file>  Copy a models.json into persistent pi configuration.' \
     '  --replace-models      Allow replacing a different existing models.json.' \
     '  --verbose             Print Podman commands to stderr before running them.' \
@@ -77,6 +79,19 @@ check_name() {
   [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "workspace: invalid name '$1'" >&2; exit 2; }
 }
 
+# Relative --mount paths are resolved against the host home, not the current
+# directory. A leading ~ is expanded too, in case the shell left it quoted.
+resolve_mount_path() {
+  local path="$1"
+  case "$path" in
+    "~") path="$HOME" ;;
+    "~/"*) path="$HOME/${path#"~/"}" ;;
+    /*) ;;
+    *) path="$HOME/$path" ;;
+  esac
+  realpath -m -- "$path"
+}
+
 [[ $# -ge 1 ]] || usage
 
 if [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -118,7 +133,7 @@ while [ $# -gt 0 ]; do
     --mount)
       [ $# -ge 2 ] || usage
       [ -n "$2" ] || usage
-      project_dir="$(realpath -m -- "$2")"
+      project_dir="$(resolve_mount_path "$2")"
       if [ -e "$project_dir" ] && [ ! -d "$project_dir" ]; then
         echo "workspace: --mount path is not a directory: $project_dir" >&2
         exit 2

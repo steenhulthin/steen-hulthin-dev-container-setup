@@ -228,13 +228,24 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_missing_mount_is_created_with_absolute_path_warning(self):
         mount = self.root / "missing parent" / "project with spaces"
-        relative = os.path.relpath(mount)
-        result = self.run_workspace("demo", "--mount", relative)
+        result = self.run_workspace("demo", "--mount", mount)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(mount.is_dir())
         self.assertIn(f"warning: created missing --mount directory: {mount}", result.stderr)
         creation = next(call for call in self.calls() if call[0] == "run")
         self.assertIn(f"{mount}:/home/dev/project", creation)
+
+    def test_relative_mount_is_resolved_against_host_home(self):
+        home = self.root / "host-home"
+        for given in ("src/proj", "~/src/proj"):
+            with self.subTest(given=given):
+                (self.root / "exists").unlink(missing_ok=True)
+                (self.root / "calls").unlink(missing_ok=True)
+                result = self.run_workspace("demo", "--mount", given)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((home / "src" / "proj").is_dir())
+                creation = next(call for call in self.calls() if call[0] == "run")
+                self.assertIn(f"{home}/src/proj:/home/dev/project", creation)
 
     def test_existing_mount_is_reused_without_creation_warning(self):
         mount = self.root / "existing project"

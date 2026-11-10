@@ -72,6 +72,8 @@ Every workspace has a project folder on the host, mounted in the workspace's hom
 bin/workspace myproject --mount ~/src/myproject
 ```
 
+A relative `--mount` path is resolved against your host home (`$HOME`), not the current directory, so `--mount src/myproject` means `~/src/myproject`. A leading `~` is expanded too. Absolute paths are used as given.
+
 If the `--mount` folder does not exist, the script creates it (including missing parent directories) and prints a warning with its absolute path. Existing folders are reused without a creation warning; paths that are not directories are rejected. A rejected mount change on an existing workspace does not create the requested folder.
 
 Creating a workspace prints the folder's host path. Open it in your file manager or editor like any other folder; files you create there are owned by you. Only mount what the agents need.
