@@ -5,13 +5,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # System packages and Node.js 24 (pi needs 22.19 or newer).
 # Upgrades run here, at build time, so workspaces start from the same packages.
+# unminimize restores the man pages the base image strips out.
 RUN apt-get update \
  && apt-get -y upgrade \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git gh sudo jq less procps openssh-client nano vim-tiny \
+      ca-certificates curl git gh sudo jq less procps openssh-client nano vim-tiny man-db \
       python3 python3-pip python3-venv \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
+ && yes | unminimize \
  && rm -rf /var/lib/apt/lists/*
 
 # Non-root user with passwordless sudo. Podman runs rootless, so root in the
