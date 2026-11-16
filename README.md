@@ -4,7 +4,7 @@ A Podman image with an Ubuntu environment for working with coding agents, and a 
 
 ## What's in the image
 
-- Ubuntu 26.04, Python 3, Git, GitHub CLI, Node.js 24, tmux (with resurrect and continuum)
+- Ubuntu 26.04, Python 3, Git, GitHub CLI, Node.js 24
 - Agent harnesses: Claude Code, Codex, Mistral Vibe, pi
 - Skill sets you choose per workspace: Matt Pocock's skills, PStack, Superpowers, Addy Osmani's agent-skills, and OpenSpec
 - Non-root user `dev` with passwordless `sudo`
@@ -38,7 +38,7 @@ Put `bin/` on your `PATH`, or call `bin/workspace` directly.
 bin/workspace myproject
 ```
 
-This creates the container `ws-myproject` and the volume `ws-myproject`, then opens a tmux session named `main` in it. Running the same command later attaches to the same workspace and the same tmux session.
+This creates the container `ws-myproject` and the volume `ws-myproject`, then opens a shell in it. Running the same command later opens another shell in the same workspace.
 
 Use `bin/workspace --help` (or `-h`) to show usage. Add `--verbose` to print the underlying Podman commands to stderr before they run:
 
@@ -66,7 +66,7 @@ All answers are fixed when the container is created. To change them, `workspace 
 
 ### The project folder
 
-Every workspace has a project folder on the host, mounted in the workspace's home under the name you chose (`/home/dev/project` by default). New tmux sessions start in it. By default the host folder is `~/workspaces/<name>`, created for you; set `WORKSPACE_ROOT` to use another parent folder. To choose another folder instead:
+Every workspace has a project folder on the host, mounted in the workspace's home under the name you chose (`/home/dev/project` by default). New shells start in it. By default the host folder is `~/workspaces/<name>`, created for you; set `WORKSPACE_ROOT` to use another parent folder. To choose another folder instead:
 
 ```bash
 bin/workspace myproject --mount ~/src/myproject
@@ -96,17 +96,11 @@ The ids are `mattpocock`, `pstack`, `superpowers`, `addyosmani`, and `openspec`.
 
 OpenSpec is a CLI, not a folder of skills. It is installed into the workspace's home folder at first start, which needs network access. Run `openspec init` in a project to generate its skills.
 
-## Shells and sessions
+## Shells
 
-Each `bin/workspace myproject` is a tmux client of the session `main`, created on first connect in the project folder. Shells and running processes live in the tmux server inside the container, so they survive you detaching or closing the terminal.
+Each `bin/workspace myproject` opens a new login shell in the workspace container, starting in the project folder. Each invocation is an independent shell, so you can run it from several terminals at once. Closing a terminal ends that shell and the processes started in it.
 
-- **Detach:** `Ctrl-b d`. The session keeps running in the background.
-- **Re-attach:** run `bin/workspace myproject` again, from any terminal.
-- **Several terminals at once:** every invocation is another client of the same session, and all clients show the same screen. For more shells, use tmux's windows and panes: `Ctrl-b c` for a new window, `Ctrl-b %` to split.
-
-Sessions survive closing the terminal, but not stopping the container. `workspace rm`, `workspace purge`, and a host reboot kill every shell and process in the workspace. The volume keeps your files and logins; it doesn't keep running processes.
-
-tmux-resurrect and tmux-continuum are installed. Continuum saves the layout (sessions, windows, panes, working directories) every 15 minutes into the volume, and restores it the next time tmux starts in the workspace. Programs that were running are not restarted. Save by hand with `Ctrl-b Ctrl-s`, restore with `Ctrl-b Ctrl-r`.
+Stopping the container (`workspace rm`, `workspace purge`, or a host reboot) kills every shell and process in the workspace. The volume keeps your files and logins; it doesn't keep running processes.
 
 ## Log in to the harnesses
 
@@ -192,13 +186,13 @@ Rebuild the image to enable this feature. For containers created from an older i
 
 `workspace` prints a nonfatal warning whenever `OPENAI_API_KEY` is unset or empty, without inspecting `models.json`. The warning also appears for `ls`, `rm`, and `purge`, but not explicit `--help`/`-h`. You can ignore it when using other authentication methods or a local endpoint that needs no key.
 
-Export `OPENAI_API_KEY` on each connection that needs it. The script forwards it by name to the tmux client, not as a literal command argument or container-creation setting, so `--verbose` does not expose the value. It is not written into `models.json` or saved by this feature.
+Export `OPENAI_API_KEY` on each connection that needs it. The script forwards it by name to the shell, not as a literal command argument or container-creation setting, so `--verbose` does not expose the value. It is not written into `models.json` or saved by this feature.
 
-On attachment, tmux updates the session environment. **New windows/panes** receive the current token; existing shells and running pi processes keep their old environment. After changing the token—or connecting without it—open a new pane and start pi there. An existing tmux server may also retain its original process environment until stopped. Do not treat environment forwarding as a secret vault: programs running as the workspace user can access the injected credential.
+Existing shells and running pi processes keep their environment. After changing the token, or connecting without it, start pi from a new connection. Do not treat environment forwarding as a secret vault: programs running as the workspace user can access the injected credential.
 
 ## Persistence
 
-Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. The project folder lives on the host and is never part of the volume. tmux sessions stop with the container, but their layout is restored (see above).
+Each workspace's home folder is a named volume, so files, shell history, and logins survive restarts and rebuilds. The project folder lives on the host and is never part of the volume. Shells stop with the container.
 
 ```bash
 bin/workspace rm myproject       # remove the container, keep the volume
@@ -244,4 +238,4 @@ Once Ollama answers, pull a model on the host and add it to pi's `models.json` i
 
 ## Trust
 
-The image installs the agent harnesses with their vendors' installers, and the skills come from GitHub at build time. Rebuilding pulls whatever those sources serve at that point, except for the pinned ones: the tmux plugins (`tmux-resurrect`, `tmux-continuum`), Superpowers, and Addy Osmani's agent-skills are fixed to a release tag in the `Containerfile`, and OpenSpec is installed at a fixed version at first start.
+The image installs the agent harnesses with their vendors' installers, and the skills come from GitHub at build time. Rebuilding pulls whatever those sources serve at that point, except for the pinned ones: Superpowers, and Addy Osmani's agent-skills are fixed to a release tag in the `Containerfile`, and OpenSpec is installed at a fixed version at first start.

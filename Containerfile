@@ -9,7 +9,7 @@ RUN apt-get update \
  && apt-get -y upgrade \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl git gh sudo jq less procps openssh-client nano vim-tiny \
-      python3 python3-pip python3-venv tmux \
+      python3 python3-pip python3-venv \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
@@ -46,14 +46,6 @@ RUN mkdir -p /opt/skills \
       test -z "$(find "$set" -name SKILL.md -printf '%h\n' | xargs -n1 basename | sort | uniq -d)" || exit 1; \
     done \
  && chmod -R a+rX /opt/skills
-
-# tmux plugins, pinned to their latest tagged releases, copied in at build time and loaded by the system-wide tmux.conf.
-# Saved sessions go to the user's home, so they live in the workspace volume.
-RUN git clone --depth 1 --branch v4.0.0 https://github.com/tmux-plugins/tmux-resurrect /opt/tmux-plugins/tmux-resurrect \
- && git clone --depth 1 --branch v3.1.0 https://github.com/tmux-plugins/tmux-continuum /opt/tmux-plugins/tmux-continuum \
- && rm -rf /opt/tmux-plugins/*/.git \
- && chmod -R a+rX /opt/tmux-plugins
-COPY image/tmux.conf /etc/tmux.conf
 
 COPY image/init-workspace.sh /usr/local/bin/init-workspace
 RUN chmod 0755 /usr/local/bin/init-workspace

@@ -3,7 +3,7 @@
 #
 #   workspace <name>                    create the workspace, or re-attach to it
 #   workspace <name> --models-file <file>  import pi's models.json; --replace-models to overwrite
-#                                       export OPENAI_API_KEY to make it available in new tmux shells
+#                                       export OPENAI_API_KEY to make it available in the workspace shell
 #   workspace <name> --mount <dir>      mount <dir> instead of the default folder; create it if missing
 #                                       a relative <dir> is resolved against $HOME
 #                                       project files go in ~/workspaces/<name> (WORKSPACE_ROOT)
@@ -32,7 +32,7 @@ print_usage() {
     '  --verbose             Print Podman commands to stderr before running them.' \
     '  -h, --help            Show this help and exit.' \
     '' \
-    'Export OPENAI_API_KEY to forward it to new tmux shells (not saved in models.json).'
+    'Export OPENAI_API_KEY to forward it to the workspace shell (not saved in models.json).'
 }
 
 # An EXIT trap covers both explicit validation errors and unexpected command
@@ -97,7 +97,7 @@ resolve_mount_path() {
 if [ -z "${OPENAI_API_KEY:-}" ]; then
   echo "workspace: warning: OPENAI_API_KEY is not set or is empty; it will not be forwarded to the workspace." >&2
   echo 'For API-key authentication, run: export OPENAI_API_KEY="your-token"' >&2
-  echo "Then reconnect and start pi in a new tmux window/pane. Other authentication methods may still work." >&2
+  echo "Then reconnect and start pi. Other authentication methods may still work." >&2
 fi
 
 case "$1" in
@@ -299,7 +299,7 @@ if [ -n "$project_dir" ]; then
     echo "workspace: from Windows: $(wslpath -w "$project_dir")" >&2
   fi
 fi
-# New tmux sessions start in the project folder. Workspaces created before the
+# New shells start in the project folder. Workspaces created before the
 # folder was recorded have no label and start in the home folder.
 log_podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container"
 folder="$(podman inspect -f '{{index .Config.Labels "workspace.folder"}}' "$container")"
@@ -307,9 +307,7 @@ connect_args=(exec -it -w "/home/dev${folder:+/$folder}")
 # Passing the variable name lets Podman resolve the host value without including
 # the token in command arguments, verbose output, or container configuration.
 if [ -n "${OPENAI_API_KEY:-}" ]; then connect_args+=(-e OPENAI_API_KEY); fi
-# tmux.conf updates the session environment on attach. Existing shells keep
-# their environment; new panes receive the current key.
-connect_args+=("$container" tmux new -A -s main)
+connect_args+=("$container" bash -l)
 log_podman "${connect_args[@]}"
 # Keep the parent shell so a failed connection also runs the EXIT help handler.
 podman "${connect_args[@]}"

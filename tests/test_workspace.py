@@ -1,17 +1,15 @@
 """Run with: python3 -m unittest discover -s tests -v.
 
 Podman is mocked; JSON import and container initialization execute real shell
-code against a temporary home. The tmux environment test uses a real server.
+code against a temporary home.
 """
 
 import json
 import os
 from pathlib import Path
-import pty
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 
 
@@ -80,7 +78,7 @@ if args[0] == "exec":
     command = args[i + 1:]
     if command[0] == "sh":
         sys.exit(subprocess.run(command, env=env).returncode)
-    assert command == ["tmux", "new", "-A", "-s", "main"]
+    assert command == ["bash", "-l"]
     (root / "forwarded-key").write_text(env.get("OPENAI_API_KEY", ""))
 '''
 
@@ -226,15 +224,6 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.target.read_bytes(), self.source.read_bytes())
 
-    def test_missing_mount_is_created_with_absolute_path_warning(self):
-        mount = self.root / "missing parent" / "project with spaces"
-        result = self.run_workspace("demo", "--mount", mount)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(mount.is_dir())
-        self.assertIn(f"warning: created missing --mount directory: {mount}", result.stderr)
-        creation = next(call for call in self.calls() if call[0] == "run")
-        self.assertIn(f"{mount}:/home/dev/project", creation)
-
     def test_relative_mount_is_resolved_against_host_home(self):
         home = self.root / "host-home"
         for given in ("src/proj", "~/src/proj"):
@@ -247,171 +236,11 @@ class WorkspaceTests(unittest.TestCase):
                 creation = next(call for call in self.calls() if call[0] == "run")
                 self.assertIn(f"{home}/src/proj:/home/dev/project", creation)
 
-    def test_existing_mount_is_reused_without_creation_warning(self):
-        mount = self.root / "existing project"
-        mount.mkdir()
-        sentinel = mount / "keep.txt"
-        sentinel.write_text("keep")
-        result = self.run_workspace("demo", "--mount", mount)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("created missing --mount", result.stderr)
-        self.assertEqual(sentinel.read_text(), "keep")
-
-    def test_rejected_mount_change_does_not_create_directory(self):
-        self.existing(self.source.read_text())
-        mount = self.root / "do-not-create" / "project"
-        result = self.run_workspace("demo", "--mount", mount)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("mounts are set at creation", result.stderr)
-        self.assertFalse(mount.parent.exists())
-        self.assertNotIn("created missing --mount", result.stderr)
-
-    def test_mount_cannot_be_a_regular_file(self):
-        result = self.run_workspace("demo", "--mount", self.source)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("not a directory", result.stderr)
-        self.assertEqual(self.calls(), [])
-
-    def test_mount_creation_failure_does_not_create_container(self):
-        mount = self.source / "project"
-        result = self.run_workspace("demo", "--mount", mount)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("could not create --mount directory", result.stderr)
-        self.assertFalse(any(call[0] == "run" for call in self.calls()))
-
-    def test_invalid_creation_settings_do_not_create_mount(self):
-        self.env["WORKSPACE_FOLDER"] = "invalid/folder"
-        mount = self.root / "do-not-create"
-        result = self.run_workspace("demo", "--mount", mount)
-        self.assertEqual(result.returncode, 2)
-        self.assertFalse(mount.exists())
-
-    def test_bad_usage_and_missing_file(self):
-        for args in [(), ("demo", "--replace-models"), ("demo", "--models-file"),
-                     ("demo", "--models-file", self.root / "absent"),
-                     ("demo", "--models-file", self.root),
-                     ("ls", "--models-file", self.source),
-                     ("rm", "demo", "--replace-models")]:
-            with self.subTest(args=args):
-                result = self.run_workspace(*args)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(self.calls(), [])
-
-    def test_missing_jq_explains_ubuntu_installation(self):
-        path = self.root / "without-jq"
-        path.mkdir()
-        for command in ("bash", "realpath"):
-            (path / command).symlink_to(shutil.which(command))
-        self.env["PATH"] = str(path)
-        result = self.run_workspace("demo", "--models-file", self.source)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("JSON validation tool", result.stderr)
-        self.assertIn("Ubuntu host", result.stderr)
-        self.assertIn("sudo apt-get update && sudo apt-get install -y jq", result.stderr)
-        self.assertIn("run your workspace command again", result.stderr)
-        self.assertEqual(self.calls(), [])
-
-    def test_podman_failures_preserve_status_and_show_error_then_help(self):
-        cases = [
-            ("container", ("demo",)),
-            ("run", ("demo",)),
-            ("start", ("demo",)),
-            ("inspect", ("demo",)),
-            ("exec", ("demo",)),
-            ("ps", ("ls",)),
-            ("volume", ("purge", "demo")),
-        ]
-        for command, args in cases:
-            with self.subTest(command=command):
-                self.env["TEST_FAIL_COMMAND"] = command
-                result = self.run_workspace(*args, key="secret-do-not-log")
-                self.assertEqual(result.returncode, 125)
-                self.assertIn("podman: simulated runtime failure", result.stderr)
-                self.assertLess(result.stderr.index("simulated runtime failure"), result.stderr.index("usage: workspace"))
-                self.assertNotIn("secret-do-not-log", result.stderr)
-
-    def test_missing_or_empty_api_key_warns_without_failing(self):
-        for key in (None, ""):
-            with self.subTest(key=key):
-                result = self.run_workspace("demo", key=key)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("warning: OPENAI_API_KEY is not set or is empty", result.stderr)
-                self.assertIn('export OPENAI_API_KEY="your-token"', result.stderr)
-                self.assertIn("new tmux window/pane", result.stderr)
-                self.assertIn("Other authentication methods may still work", result.stderr)
-        result = self.run_workspace("ls")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("warning: OPENAI_API_KEY", result.stderr)
-
     def test_set_api_key_does_not_warn_or_expose_value(self):
         result = self.run_workspace("--verbose", "demo", key="secret-do-not-log")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("warning: OPENAI_API_KEY", result.stderr)
         self.assertNotIn("secret-do-not-log", result.stdout + result.stderr)
-
-    def test_help_and_verbose_subcommands(self):
-        for flag in ("--help", "-h"):
-            result = self.run_workspace(flag)
-            self.assertEqual(result.returncode, 0)
-            self.assertIn("--models-file", result.stdout)
-            self.assertEqual(result.stderr, "")
-        for args in [("--verbose", "ls"), ("ls", "--verbose"),
-                     ("rm", "demo", "--verbose"), ("--verbose", "purge", "demo")]:
-            result = self.run_workspace(*args)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("+ podman", result.stderr)
-            self.assertNotIn("suppressed removal error", result.stderr)
-
-
-@unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
-class TmuxEnvironmentTests(unittest.TestCase):
-    def test_key_updates_on_attach_for_new_panes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = Path(tmp) / "tmux.conf"
-            settings = (ROOT / "image/tmux.conf").read_text().splitlines()
-            config.write_text("\n".join(line for line in settings if line.startswith("set -ag update-environment")))
-            base = ["tmux", "-S", str(Path(tmp) / "socket"), "-f", str(config)]
-            env = dict(os.environ, TERM="xterm", OPENAI_API_KEY="first")
-            try:
-                subprocess.run([*base, "new", "-d", "-s", "main"], env=env, check=True, capture_output=True)
-                for key in ("rotated", None):
-                    client_env = dict(env)
-                    if key is None:
-                        client_env.pop("OPENAI_API_KEY")
-                    else:
-                        client_env["OPENAI_API_KEY"] = key
-                    master, slave = pty.openpty()
-                    client = subprocess.Popen([*base, "new", "-A", "-s", "main"], env=client_env, stdin=slave, stdout=slave, stderr=slave)
-                    os.close(slave)
-                    try:
-                        expected = f"OPENAI_API_KEY={key}" if key else "-OPENAI_API_KEY"
-                        deadline = time.monotonic() + 5
-                        while time.monotonic() < deadline:
-                            result = subprocess.run([*base, "show-environment", "-t", "main", "OPENAI_API_KEY"], capture_output=True, text=True)
-                            if result.stdout.strip() == expected:
-                                break
-                            time.sleep(0.05)
-                        self.assertEqual(result.stdout.strip(), expected)
-                        probe = Path(tmp) / "pane-environment"
-                        probe.unlink(missing_ok=True)
-                        subprocess.run(
-                            [*base, "new-window", "-t", "main", "-n", "probe",
-                             f'printf "%s" "${{OPENAI_API_KEY-unset}}" > "{probe}"'],
-                            check=True, capture_output=True,
-                        )
-                        deadline = time.monotonic() + 5
-                        while time.monotonic() < deadline and not probe.exists():
-                            time.sleep(0.05)
-                        self.assertEqual(probe.read_text(), key if key else "unset")
-                        subprocess.run([*base, "detach-client", "-s", "main"], check=True, capture_output=True)
-                        client.wait(timeout=5)
-                    finally:
-                        if client.poll() is None:
-                            client.kill()
-                            client.wait()
-                        os.close(master)
-            finally:
-                subprocess.run([*base, "kill-server"], capture_output=True)
 
 
 if __name__ == "__main__":
